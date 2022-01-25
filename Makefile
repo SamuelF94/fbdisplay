@@ -1,5 +1,5 @@
-CFLAGS=-c -Wall -O3 -DDEBUG_LOG
-#CFLAGS=-c -Wall -O3 
+#CFLAGS=-c -Wall -O3 -DDEBUG_LOG
+CFLAGS=-c -Wall -O3 
 
 # For Raspberry Pi, it's recommended to use PIGPIO for fast SPI I/O
 #LIBS = -lpigpio -pthread

@@ -50,18 +50,6 @@ const char actionFile[] = "/var/www/html/action.txt";
 
 
 
-
-static unsigned short def_r[] = 
-    { 0,   0,   0,   0, 172, 172, 172, 172,  
-     84,  84,  84,  84, 255, 255, 255, 255};
-static unsigned short def_g[] = 
-    { 0,   0, 172, 172,   0,   0,  84, 172,  
-     84,  84, 255, 255,  84,  84, 255, 255};
-static unsigned short def_b[] = 
-    { 0, 172,   0, 172,   0, 172,   0, 172,  
-     84, 255,  84, 255,  84, 255,  84, 255};
-
-
 /*--------------------------------------------------------------------------}
 {                        BITMAP FILE HEADER DEFINITION                      }
 {--------------------------------------------------------------------------*/
@@ -143,261 +131,82 @@ struct fb_var_screeninfo vinfo = { 0 };
 struct fb_fix_screeninfo finfo = { 0 };
 
 
-
-
-static int
-GPIOExport(int pin)
+uint16_t RGB16(uint8_t r, uint8_t g, uint8_t b )
 {
-#define BUFFER_MAX 3
-	char buffer[BUFFER_MAX];
-	ssize_t bytes_written;
-	int fd;
-
-	fd = open("/sys/class/gpio/export", O_WRONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open export for writing!\n");
-		return(-1);
-	}
-
-	bytes_written = snprintf(buffer, BUFFER_MAX, "%d", pin);
-	write(fd, buffer, bytes_written);
-	close(fd);
-	return(0);
-}
-
-static int
-GPIOUnexport(int pin)
-{
-	char buffer[BUFFER_MAX];
-	ssize_t bytes_written;
-	int fd;
-
-	fd = open("/sys/class/gpio/unexport", O_WRONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open unexport for writing!\n");
-		return(-1);
-	}
-
-	bytes_written = snprintf(buffer, BUFFER_MAX, "%d", pin);
-	write(fd, buffer, bytes_written);
-	close(fd);
-	return(0);
-}
-
-static int
-GPIODirection(int pin, int dir)
-{
-	static const char s_directions_str[]  = "in\0out";
-
-#define DIRECTION_MAX 35
-	char path[DIRECTION_MAX];
-	int fd;
-
-	snprintf(path, DIRECTION_MAX, "/sys/class/gpio/gpio%d/direction", pin);
-	fd = open(path, O_WRONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open gpio direction for writing!\n");
-		return(-1);
-	}
-
-	if (-1 == write(fd, &s_directions_str[IN == dir ? 0 : 3], IN == dir ? 2 : 3)) {
-		fprintf(stderr, "Failed to set direction!\n");
-		return(-1);
-	}
-
-	close(fd);
-	return(0);
-}
-
-static int
-GPIORead(int pin)
-{
-#define VALUE_MAX 30
-	char path[VALUE_MAX];
-	char value_str[3];
-	int fd;
-
-	snprintf(path, VALUE_MAX, "/sys/class/gpio/gpio%d/value", pin);
-	fd = open(path, O_RDONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open gpio value for reading!\n");
-		return(-1);
-	}
-
-	if (-1 == read(fd, value_str, 3)) {
-		fprintf(stderr, "Failed to read value!\n");
-		return(-1);
-	}
-
-	close(fd);
-
-	return(atoi(value_str));
-}
-
-static int
-GPIOWrite(int pin, int value)
-{
-	static const char s_values_str[] = "01";
-
-	char path[VALUE_MAX];
-	int fd;
-
-	snprintf(path, VALUE_MAX, "/sys/class/gpio/gpio%d/value", pin);
-	fd = open(path, O_WRONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open gpio value for writing!\n");
-		return(-1);
-	}
-
-	if (1 != write(fd, &s_values_str[LOW == value ? 0 : 1], 1)) {
-		fprintf(stderr, "Failed to write value!\n");
-		return(-1);
-	}
-
-	close(fd);
-	return(0);
+    uint16_t c = b>>3; // b
+    c |= ((g>>2)<<5); // g
+    c |= ((r>>3)<<11); // r
+	return c;
 }
 
 
-static void SwapBytes(uint16_t *color) 
+void Draw_Bitmap (char* BitmapName,  uint8_t* FrameBuffer)
 {
-    uint8_t temp = *color >> 8;
-    *color = (*color << 8) | temp;
-}
-
-
-void put_pixel_RGB565(uint16_t x, uint16_t y, uint8_t r, uint8_t g, uint8_t b)
-{
-
-    // calculate the pixel's byte offset inside the buffer
-    // note: x * 2 as every pixel is 2 consecutive bytes
-	// 16 bits par pixel
-    unsigned int pix_offset = x * 2 + y * 480*2;
-
-    // now this is about the same as 'fbp[pix_offset] = value'
-    // but a bit more complicated for RGB565
-    uint16_t c = ((r / 8) << 11) + ((g / 4) << 5) + (b / 8);
-    // or: c = ((r / 8) * 2048) + ((g / 4) * 32) + (b / 8);
-    // write 'two bytes at once'
-	/*	printf("pix offset:%d , color %d\n",pix_offset, c ); */
-    *((unsigned short*)(fbp + pix_offset)) = c;
-
-}
-
-
-
-#define CHAR_WIDTH 8
-#define CHAR_HEIGHT 8
-
-#define bit_set(val, bit_no) (((val) >> (bit_no)) & 1)
-
-void DrawChar(char c, uint16_t x, uint16_t y,uint8_t fontsize)
-{
-    uint8_t i,j;
-
-    // Convert the character to an index
-/*		printf("%c -",c); */
-    c = c & 0x7F;
-   
-/*		printf("%d\r\n",c); */
-
-    // 'font' is a multidimensional array of [96][char_width]
-    // which is really just a 1D array of size 96*char_width.
-    const uint8_t* chr = font8x8_basic[c];
-		uint8_t r,g,b;
-    // Draw pixels
-    for (j=0; j<CHAR_WIDTH; j++) 
-		{
-				uint8_t val = chr[j];
-				uint8_t isize, jsize;
-        for (i=0; i<CHAR_HEIGHT; i++) 
-				{
-            if (bit_set(val,i))
-						{
-							r=250; g = 0 ; b=250;	
-						}
-						else
-						{
-							r=0; g = 0 ; b=0;
-						}
-						for ( jsize = 0 ; jsize < fontsize; jsize++)
-						{
-							for ( isize = 0 ; isize < fontsize; isize++)
-		            put_pixel_RGB565(x+i*fontsize+jsize, y+j*fontsize+isize, r,g,b);
-						}
-        }
-    }
-}
-
-
-
-void DrawString(const char* str, uint16_t x, uint16_t y, uint8_t fontsize)
-{
-    while (*str) 
-		{
-        DrawChar(*str++, x, y,fontsize);
-        x += CHAR_WIDTH*fontsize;
-    }
-}
-
-
-/* msleep(): Sleep for the requested number of milliseconds. */
-int msleep(long msec)
-{
-    struct timespec ts;
-    int res;
-
-    if (msec < 0)
+  unsigned int fpos = 0;                      // File position
+  if (BitmapName)                         // We have a valid name string
+  {
+    FILE* fb = fopen(BitmapName, "rb");             // Open the bitmap file
+    if (fb > 0)                         // File opened successfully
     {
-        errno = EINVAL;
-        return -1;
+      size_t br;
+      BITMAPFILEHEADER bmpHeader;
+      br = fread(&bmpHeader, 1, sizeof(bmpHeader), fb);   // Read the bitmap header
+      if (br == sizeof(bmpHeader) && bmpHeader.bfType == 0x4D42) // Check it is BMP file
+      {
+        BITMAPINFOHEADER bmpInfo;
+        fpos = sizeof(bmpHeader);             // File position is at sizeof(bmpHeader)
+        br = fread(&bmpInfo, 1, sizeof(bmpInfo), fb);   // Read the bitmap info header
+        /** printf("biBitCount:%d, width:%d, heigth:%d\n",bmpInfo.biBitCount, bmpInfo.biWidth,bmpInfo.biHeight); **/
+
+        if (br == sizeof(bmpInfo))              // Check bitmap info read worked
+        {
+          fpos += sizeof(bmpInfo);            // File position moved sizeof(bmpInfo)
+          if (bmpInfo.biSize == 108)
+          {
+            WIN4XBITMAPINFOHEADER bmpInfo4x;
+            br = fread(&bmpInfo4x, 1, sizeof(bmpInfo4x), fb); // Read the bitmap v4 info header exta data
+            fpos += sizeof(bmpInfo4x);          // File position moved sizeof(bmpInfo4x)
+          }
+          if (bmpHeader.bfOffBits > fpos)
+          {
+            uint8_t b;
+            for (int i = 0; i < bmpHeader.bfOffBits - fpos; i++)
+              fread(&b, 1, sizeof(b), fb);
+            fpos = bmpHeader.bfOffBits;
+          }
+          /* file positioned at image we must transfer it to screen */
+          int y = 0;
+          short *destination = (short *)FrameBuffer;
+          while (!feof(fb) && y < bmpInfo.biHeight*bmpInfo.biWidth) // While no error and not all line read
+          {
+            RGB24 theRgb;
+            fread(&theRgb, 1, 3, fb);
+            uint32_t coordY = vinfo.yres - y/vinfo.xres;
+            uint32_t coordX = y%vinfo.xres;
+    /**       printf("%03d, %03d\n",coordY, coordX );**/
+            destination[coordX + (coordY-1)*480] = RGB16(theRgb.red, theRgb.green, theRgb.blue);
+            /** printf("y:%d\n",y ); **/
+            y++;
+          }
+        }
+      }
+      else perror("Header open failed");
+      fclose(fb);
     }
-
-    ts.tv_sec = msec / 1000;
-    ts.tv_nsec = (msec % 1000) * 1000000;
-
-    do {
-        res = nanosleep(&ts, &ts);
-    } while (res && errno == EINTR);
-
-    return res;
+  }
 }
 
 
-time_t getFileModificationTime(const char *path) 
+void ShowHelp()
 {
-    struct stat attr;
-    stat(path, &attr);
-/**    printf("Last modified time: %s", localtime(&attr.st_mtime)); **/
-		return attr.st_mtime;
-}
-
-
-char *centerText(char *pBuffer, char *text, int fieldWidth) 
-{
-		if ( strlen(text) < fieldWidth )
-		{
-	    int padlen = (fieldWidth - strlen(text)) / 2;
-  	  snprintf(pBuffer,fieldWidth,"%*s%s%*s\n", padlen, "", text, padlen, "");
-		}
-		else 
-  	  snprintf(pBuffer,fieldWidth,"%s",text);
-		return pBuffer;
-} 
-
-
-void Reboot()
-{
-	/* system("sudo shutdown now"); */
-	printf("shutdown\n");
+	printf("usage: fbbmp <filename>\n");
+	printf("where filename is an 480x320 24bits bitmap\n");
 }
 
 
 // application entry point
 int main(int argc, char* argv[])
 {
-	char szDisplay[15];
-	int iRepeat = 1, iboucle;
 	// Open the file for reading and writing
 	int fbfd = open("/dev/fb1", O_RDWR);
 	if (fbfd == -1) {
@@ -429,71 +238,14 @@ int main(int argc, char* argv[])
 	if ( fbp == (uint8_t*)-1 )
 		return(1);
 
-	time_t fileTimeDisplay = getFileModificationTime(displayFile);
-	time_t fileTimeAction = getFileModificationTime(actionFile);
-
-
-	if ( -1 == GPIOExport(PIN))
+	if ( argc != 2 || (access( argv[1], F_OK ) != 0)  ) 
 	{
-		printf("Unable to  use gpio\n");
+		ShowHelp();
+		exit(0);
 	}
 
-	if(  -1 == GPIODirection(PIN, IN))
-	{
-		printf("Unable to set pin direction\n");
-	}
+	Draw_Bitmap (argv[1], fbp);
 
-
-
-
-
-	for (;;)
-	{
-		
-		time_t t = time(NULL);
-		struct tm tm = *localtime(&t);
-		sprintf(szDisplay,"     %02d:%02d      ", tm.tm_hour, tm.tm_min, tm.tm_sec);
-		DrawString(szDisplay,0,50,4);
-		time_t currentfileTimeDisplay = getFileModificationTime(displayFile);
-		time_t currentfileTimeAction = getFileModificationTime(actionFile);
-		if ( GPIORead(PIN) == HIGH )
-			Reboot();
- 		if ( currentfileTimeDisplay > fileTimeDisplay )
-		{
-			fileTimeDisplay = currentfileTimeDisplay;
-			FILE * pF =  fopen( displayFile,"r" );
-			if ( pF != NULL )
-			{
-				char szBuffer[200], szBuffer2[200];
-				memset(szBuffer,0,sizeof(szBuffer));
-				memset(szBuffer2,0,sizeof(szBuffer2));
-				fread(szBuffer, 50,1,pF);
-				fclose(pF);
-				DrawString(centerText(szBuffer2,szBuffer,30),10,250,2);
-			}
-		}
-		if ( GPIORead(PIN) == HIGH )
-			Reboot();
- 		if ( currentfileTimeAction > fileTimeAction )
-		{
-			fileTimeAction = currentfileTimeAction;
-			FILE * pF =  fopen( actionFile,"r" );
-			if ( pF != NULL )
-			{
-				char szBuffer[500];
-				memset(szBuffer,0,sizeof(szBuffer));
-				fread(szBuffer, 450,1,pF);
-				fclose(pF);
-				system( szBuffer );
-			}
-		}
-		if ( GPIORead(26) == HIGH )
-			Reboot();
-		msleep(500);
-	}
-
-
-	// unmap fb file from memory
 	munmap(fbp, finfo.smem_len);
 	// close fb fil
 	close(fbfd);
